@@ -1,5 +1,6 @@
-using Microsoft.OpenApi.Models;
+using System.Text;
 using System.Collections.Generic;
+using Microsoft.OpenApi;
 using System.Threading.RateLimiting;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -10,12 +11,15 @@ using Microsoft.IdentityModel.Tokens;
 using PollenForYouApi.Data;
 using PollenForYouApi.Entities;
 using PollenForYouApi.Filters;
+using PollenForYouApi.HealthChecks;
 using PollenForYouApi.Middleware;
 using PollenForYouApi.Options;
 using PollenForYouApi.Profiles;
 using PollenForYouApi.Repositories;
 using PollenForYouApi.Services;
 using PollenForYouApi.Validators;
+
+const string CorsPolicyName = "Frontend";
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,31 +34,24 @@ builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "PollenForYou API", Version = "v1" });
 
-    // Add the Bearer token definition
+    // Bearer JWT definition: Swagger UI shows an "Authorize" button where you
+    // paste the access token; requests then send "Authorization: Bearer {token}".
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
+        Description = "Paste your JWT access token below (no \"Bearer \" prefix needed).",
         Name = "Authorization",
         In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT"
     });
 
-    // Apply it globally
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement()
+    // Apply it globally. Swashbuckle 10 / Microsoft.OpenApi 2.x: this overload
+    // receives the generated document so references resolve by Id.
+    c.AddSecurityRequirement(document => new OpenApiSecurityRequirement()
     {
         {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                },
-                Scheme = "oauth2",
-                Name = "Bearer",
-                In = ParameterLocation.Header,
-            },
+            new OpenApiSecuritySchemeReference("Bearer", document, null),
             new List<string>()
         }
     });
@@ -62,6 +59,34 @@ builder.Services.AddSwaggerGen(c =>
 
 builder.Services.AddDbContext<PfyDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// CORS (SRS frontend contract): the React client runs on a separate origin
+// (Vercel in production, Vite dev server locally). Origins come from config so
+// no redeploy is needed when the frontend URL changes.
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? [];
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(CorsPolicyName, policy =>
+    {
+        policy.AllowAnyHeader().AllowAnyMethod();
+
+        if (corsOrigins.Length == 0)
+        {
+            // No origins configured — deny cross-origin (secure default).
+            return;
+        }
+
+        policy.WithOrigins(corsOrigins);
+    });
+});
+
+// Health checks: /health liveness probe (DB connectivity). Built into the
+// ASP.NET Core shared framework — no packages. Kept dependency-free via a
+// custom check using the existing PfyDbContext (AGENT.md minimal-dependency rule).
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("database");
 
 builder.Services
     .AddIdentityCore<ApplicationUser>(options =>
@@ -171,6 +196,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// CORS before auth — preflight (OPTIONS) requests must pass without a token.
+app.UseCors(CorsPolicyName);
+
 // Rate limiting before auth/endpoints so the checkout policy applies per-IP.
 app.UseRateLimiter();
 
@@ -178,5 +206,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Liveness/readiness probe for App Service / load balancers (anonymous).
+app.MapHealthChecks("/health");
 
 app.Run();

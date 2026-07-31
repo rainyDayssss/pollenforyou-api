@@ -104,6 +104,8 @@ Configuration lives in `appsettings.json` and can be overridden with environment
 | `DefaultAdmin:Password` | `Superadmin@2026` | Seeded superadmin password |
 | `RateLimiting:CheckoutPermitLimit` | `10` | Max checkout submissions per IP per window |
 | `RateLimiting:CheckoutWindowSeconds` | `60` | Fixed-window length for checkout limiting |
+| `Cors:AllowedOrigins` | `localhost:5173`, `localhost:3000` | Frontend origins allowed cross-origin (set to your Vercel URL in production) |
+| `AllowedHosts` | `*` (dev) / `api.pollenforyou.com` (prod) | Host-header allow-list — hardened in `appsettings.Production.json` |
 
 ### Default superadmin
 
@@ -133,6 +135,7 @@ All implemented endpoints. `page` (default `1`) and `pageSize` (default `12`, ma
 
 | Method | Route | Description |
 | :--- | :--- | :--- |
+| `GET` | `/health` | Liveness/readiness probe — verifies DB connectivity (for App Service / load balancers) |
 | `GET` | `/api/public/products` | Active products, optional `?category=flowers&page=1&pageSize=12` |
 | `POST` | `/api/public/checkout/submit` | Customer checkout (**rate-limited**): returns Order Number; optional `Idempotency-Key` header makes retries safe |
 | `POST` | `/api/auth/login` | Issue JWT access + refresh pair |
@@ -143,7 +146,7 @@ All implemented endpoints. `page` (default `1`) and `pageSize` (default `12`, ma
 | Method | Route | Description |
 | :--- | :--- | :--- |
 | `POST` | `/api/auth/logout` | Revoke all active refresh sessions |
-| `GET` | `/api/orders/queue` | FIFO active `Pending` orders (paginated) |
+| `GET` | `/api/orders/queue` | FIFO active `Pending` orders (paginated); supports **ETag / `If-None-Match` → `304`** for 5s polling (client opt-in) |
 | `POST` | `/api/orders/claim/{orderNumber}` | Acquire 15-min workspace claim (`409` on collision) |
 | `DELETE` | `/api/orders/claim/{orderNumber}` | Release your claim |
 | `POST` | `/api/orders/confirm` | Settle: promote to `In Production`, write frozen items + payment |
@@ -239,6 +242,12 @@ PollenForYouApi/
 ├── Options/              # Strongly-typed JwtOptions
 └── Program.cs            # Composition root / DI / pipeline
 ```
+
+## CORS & Production Hardening
+
+- **CORS** is config-driven: `Cors:AllowedOrigins` in `appsettings.json` (dev) / `appsettings.Production.json` (prod). The React frontend (Vercel in production) must be listed here or its browser requests will be blocked. An empty list = deny all cross-origin (secure default).
+- **Health checks**: `GET /health` runs a dependency-free DB connectivity probe (custom `DatabaseHealthCheck` using the existing `PfyDbContext` — no extra packages). Anonymous by design for load-balancer probes.
+- **`AllowedHosts`** is restricted to `api.pollenforyou.com` in `appsettings.Production.json` — set the real API hostname before deploying. Dev keeps `*` for local flexibility.
 
 ## Roadmap / Not Yet Implemented
 

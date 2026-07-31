@@ -119,6 +119,7 @@ All collection endpoints support `page` (default `1`, 1-indexed) and `pageSize` 
 
 | Method | Route | Auth | Notes |
 | :--- | :--- | :--- | :--- |
+| GET | `/health` | Anonymous | Liveness/readiness probe — dependency-free DB connectivity check (`DatabaseHealthCheck`); for App Service / LB probes |
 | GET | `/api/public/products` | Anonymous | On-load cached; `category`, `page`, `pageSize` |
 | POST | `/api/public/checkout/submit` | Anonymous (**rate-limited**: fixed-window per-IP, `checkout` policy) | Lazy eviction hook → recalc total → create `Pending` → return Order Number. Optional `Idempotency-Key` header: replays resolve to the original order (unique filtered index on `Orders.IdempotencyKey`, no duplicates). |
 | POST | `/api/auth/login` | Anonymous | Issue JWT access + refresh pair |
@@ -146,11 +147,14 @@ All collection endpoints support `page` (default `1`, 1-indexed) and `pageSize` 
 - **Query filter on `ApplicationUser` affects Identity & audit joins:** `UserManager.FindByEmailAsync/FindByIdAsync` inherit the `IsActive` filter, so soft-deleted admins can't authenticate (desired) — but the `UsersController` listing/reactivation endpoints MUST use `IgnoreQueryFilters()`, or reactivation can't locate the account. Also, `Payment.VerifiedBy` is a required FK whose principal can be filtered out → project audit DTOs from the raw `VerifiedByAdminId` int, not the navigation.
 - **Verified order rows are immutable.**
 - **Rate limiting:** Public checkout endpoints protected by ASP.NET Core **built-in** Rate Limiting middleware (`AddRateLimiter` + `UseRateLimiter`, no packages). Policy `checkout` = fixed-window per IP (`RateLimitingOptions` in `appsettings.json`); rejection → `429` with uniform `ProblemDetails` + `Retry-After` header via `OnRejected`.
+- **CORS (config-driven):** Named policy `Frontend` reads `Cors:AllowedOrigins` from config (dev: `localhost:5173`/`localhost:3000`; prod: the Vercel frontend URL in `appsettings.Production.json`). Empty list = deny all cross-origin (secure default). `UseCors` runs **before** auth so preflight `OPTIONS` requests pass without a token. Never hardcode origins.
+- **Health checks:** `AddHealthChecks().AddCheck<DatabaseHealthCheck>("database")` + `MapHealthChecks("/health")` — built into the shared framework, no packages. The custom check uses the existing `PfyDbContext` (`CanConnectAsync`), honoring the minimal-dependency rule.
+- **AllowedHosts:** harden per environment — dev `*`, production restricts to the API hostname (`api.pollenforyou.com` placeholder in `appsettings.Production.json`). Set the real hostname before deploy.
 
 ## 13. Client Polling Contract (context for API design)
 
 - Customer catalog: **on-load fetch only**, cached in memory. **Polling catalog endpoints is strictly forbidden.**
-- Admin queue: TanStack Query v5 polling every **5 seconds**; support HTTP conditional headers (ETag / 304) so idle tabs don't burn bandwidth.
+- Admin queue: TanStack Query v5 polling every **5 seconds**; the server sends a **strong ETag** on `GET /api/orders/queue` and returns a bodyless `304 Not Modified` when the client's `If-None-Match` still matches (SRS §2.3). **The client MUST opt in:** store the `ETag` header from the last 200 response, send it back as `If-None-Match` on the next poll, and on `304` keep the previously cached page instead of refetching. Without the opt-in the server still works — it just always returns 200. (Note: the middleware must not cache the queue response; ETag validation happens per-request in `AdminOrdersController.GetQueue`.)
 
 ## 14. Hard Rules / Pitfalls to Avoid
 
