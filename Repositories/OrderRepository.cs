@@ -1,9 +1,11 @@
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using PollenForYouApi.Data;
 using PollenForYouApi.DTOs;
 using PollenForYouApi.Entities;
+using PollenForYouApi.Exceptions;
 
 namespace PollenForYouApi.Repositories;
 
@@ -216,6 +218,77 @@ public class OrderRepository : IOrderRepository
             .ExecuteUpdateAsync(setters => setters.SetProperty(o => o.Status, newStatus), ct);
 
         return affected > 0 ? StatusUpdateResult.Success : StatusUpdateResult.Conflict;
+    }
+
+    public async Task<Order?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken ct)
+    {
+        return await _db.Orders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.IdempotencyKey == idempotencyKey, ct);
+    }
+
+    public async Task<Order> CreateCheckoutAsync(Order order, CancellationToken ct)
+    {
+        // Daily order number (SRS §3.1.1): PFY-YYYYMMDD-XXXX where XXXX is today's
+        // running count + 1. The unique OrderNumber index is the race backstop — a
+        // concurrent checkout that claims the same number violates it (2601/2627),
+        // so we clear the tracker and retry with the next number. Workerless.
+        //
+        // Idempotency: a concurrent request with the SAME IdempotencyKey (double-
+        // click, TanStack refetch, network retry) violates the filtered unique
+        // IdempotencyKey index instead — we resolve to the winner's row rather than
+        // creating a duplicate. Replays are also caught by the service pre-check.
+        const int maxAttempts = 5;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            order.OrderNumber = await GenerateOrderNumberAsync(ct);
+
+            _db.Orders.Add(order);
+
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+                return order;
+            }
+            catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+            {
+                // Distinguish an idempotency-key collision from an order-number
+                // collision: if a row already exists under this key, another
+                // request won the race — return it, never create a duplicate.
+                if (order.IdempotencyKey is not null)
+                {
+                    var existing = await GetByIdempotencyKeyAsync(order.IdempotencyKey, ct);
+                    if (existing is not null)
+                    {
+                        _db.ChangeTracker.Clear();
+                        return existing;
+                    }
+                }
+
+                _db.ChangeTracker.Clear();
+            }
+        }
+
+        throw new ConflictException("Unable to allocate a unique order number; please retry.");
+    }
+
+    private async Task<string> GenerateOrderNumberAsync(CancellationToken ct)
+    {
+        var datePart = DateTime.UtcNow.ToString("yyyyMMdd");
+        var prefix = $"PFY-{datePart}-";
+
+        var count = await _db.Orders
+            .AsNoTracking()
+            .CountAsync(o => o.OrderNumber.StartsWith(prefix), ct);
+
+        return $"{prefix}{count + 1:D4}";
+    }
+
+    /// <summary>Matches SQL Server unique index (2601) / unique constraint (2627) violations.</summary>
+    private static bool IsUniqueViolation(DbUpdateException ex)
+    {
+        return ex.GetBaseException() is SqlException { Number: 2601 or 2627 };
     }
 
     public async Task<int> ExecuteLazyEvictionAsync(CancellationToken ct)

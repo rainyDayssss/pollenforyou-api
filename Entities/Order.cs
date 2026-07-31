@@ -11,6 +11,9 @@ public class Order
 
     public string OrderNumber { get; set; } = string.Empty;
 
+    /// <summary>Optional client-supplied idempotency key (checkout replay protection); unique when present.</summary>
+    public string? IdempotencyKey { get; set; }
+
     // Customer intake & logistics snapshot
     public string CustomerName { get; set; } = string.Empty;
 

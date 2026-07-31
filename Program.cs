@@ -1,7 +1,9 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using PollenForYouApi.Data;
@@ -66,6 +68,43 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 builder.Services.Configure<JwtOptions>(jwt);
 
+// Rate limiting (SRS §4): fixed-window per-IP policy guarding the public
+// checkout endpoint. Built into the ASP.NET Core shared framework — no packages.
+var rateLimiting = builder.Configuration.GetSection("RateLimiting").Get<RateLimitingOptions>()
+    ?? new RateLimitingOptions();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // Uniform RFC 7807 body + Retry-After on rejection (AGENT.md §12).
+    options.OnRejected = async (context, ct) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)retryAfter.TotalSeconds).ToString();
+        }
+
+        await Results.Problem(
+            statusCode: StatusCodes.Status429TooManyRequests,
+            title: "Too Many Requests",
+            detail: "Too many checkout attempts. Please wait and try again.")
+            .ExecuteAsync(context.HttpContext);
+    };
+
+    options.AddPolicy("checkout", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = rateLimiting.CheckoutPermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimiting.CheckoutWindowSeconds),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
+
 builder.Services.AddAutoMapper(cfg => cfg.AddMaps(typeof(UserMappingProfile).Assembly));
 builder.Services.AddValidatorsFromAssembly(typeof(CreateUserRequestValidator).Assembly);
 builder.Services.AddScoped<ValidationFilter>();
@@ -97,6 +136,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Rate limiting before auth/endpoints so the checkout policy applies per-IP.
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

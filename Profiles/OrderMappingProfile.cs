@@ -24,5 +24,11 @@ public class OrderMappingProfile : Profile
 
         CreateMap<OrderItem, OrderItemDto>();
         CreateMap<Payment, PaymentDto>();
+
+        // Checkout → transient Pending order. Only the customer intake fields map;
+        // line items are NOT persisted at checkout (they're frozen at settlement,
+        // SRS §3.1.4), so Items is ignored here.
+        CreateMap<CheckoutRequestDto, Order>()
+            .ForMember(d => d.Items, opt => opt.Ignore());
     }
 }

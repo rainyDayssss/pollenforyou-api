@@ -15,11 +15,20 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
     {
         builder.HasIndex(o => o.OrderNumber).IsUnique();
 
+        // Optional checkout idempotency key — unique only when present, so clients
+        // that don't send one (legacy) never collide (same pattern as NormalizedEmail).
+        builder.HasIndex(o => o.IdempotencyKey)
+            .IsUnique()
+            .HasFilter("[IdempotencyKey] IS NOT NULL");
+
         builder.HasIndex(o => new { o.Status, o.ExpiresAt });
 
         builder.Property(o => o.OrderNumber)
             .HasMaxLength(30)
             .IsRequired();
+
+        builder.Property(o => o.IdempotencyKey)
+            .HasMaxLength(100);
 
         builder.Property(o => o.CustomerName)
             .HasMaxLength(150)

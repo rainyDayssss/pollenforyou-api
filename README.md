@@ -15,6 +15,8 @@ The system is built around a **unified single-ledger** design — transient chec
 - **Public catalog** — on-load cached product listing with category filtering and pagination (active items only)
 - **Admin inventory** — full listing including soft-deleted items, Admin / Superadmin create/update with partial (PATCH) semantics and availability toggling
 - **Admin user management** — Superadmin-only account lifecycle (create / list / soft-delete / reactivate) with DB-level email uniqueness
+- **Public checkout** — rate-limited customer submission: lazy-eviction hook, server-side total recomputation, deterministic `PFY-YYYYMMDD-XXXX` order numbers
+- **Rate limiting** — built-in ASP.NET Core fixed-window limiter on public checkout (per-IP, 429 + `Retry-After`)
 - **Live order queue** — FIFO `Pending` orders, paginated, built for 5-second TanStack polling
 - **Workspace claims** — 15-minute locks guarded by `RowVersion` optimistic concurrency (loser gets `409`)
 - **Atomic settlement** — one transaction: promote to `In Production`, write frozen line-item + payment snapshots, run hitchhiker lazy eviction
@@ -100,6 +102,8 @@ Configuration lives in `appsettings.json` and can be overridden with environment
 | `Jwt:RefreshTokenLifetimeDays` | `7` | Refresh-token session lifetime |
 | `DefaultAdmin:Email` | `superadmin@pollenforyou.com` | Seeded superadmin email |
 | `DefaultAdmin:Password` | `Superadmin@2026` | Seeded superadmin password |
+| `RateLimiting:CheckoutPermitLimit` | `10` | Max checkout submissions per IP per window |
+| `RateLimiting:CheckoutWindowSeconds` | `60` | Fixed-window length for checkout limiting |
 
 ### Default superadmin
 
@@ -130,6 +134,7 @@ All implemented endpoints. `page` (default `1`) and `pageSize` (default `12`, ma
 | Method | Route | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/public/products` | Active products, optional `?category=flowers&page=1&pageSize=12` |
+| `POST` | `/api/public/checkout/submit` | Customer checkout (**rate-limited**): returns Order Number; optional `Idempotency-Key` header makes retries safe |
 | `POST` | `/api/auth/login` | Issue JWT access + refresh pair |
 | `POST` | `/api/auth/refresh` | Rotate refresh token, issue new pair |
 
@@ -197,6 +202,7 @@ curl -sk https://localhost:7200/api/orders/queue \
 | `401` | Bad credentials, invalid/expired/revoked refresh token |
 | `404` | Missing order/user/product, release of an unclaimed order |
 | `409` | Duplicate email / product code, claim collisions (`RowVersion` loss), settlement conflicts |
+| `429` | Rate limit exceeded on public checkout (includes `Retry-After`) |
 | `500` | Unhandled exceptions (logged; generic message, no internals leaked) |
 
 ## Order Lifecycle
@@ -209,6 +215,7 @@ Pending ───► In Production ───► Ready for Dispatch ───► 
 ```
 
 - Checkouts are created `Pending` with a 2-hour `ExpiresAt` TTL and a structured `PFY-YYYYMMDD-XXXX` order number
+- Optional `Idempotency-Key` header on checkout — the same key always resolves to the same order (no duplicates on retry/double-click)
 - Settling an order requires it to be **pending, unexpired, and claimed by the settling admin**
 - Settlement freezes line-item snapshots (product name + price-at-purchase) for financial auditability
 - Expired records are never deleted — reads isolate them with `WHERE Status = 'Pending' AND ExpiresAt > GETUTCDATE()`
@@ -217,7 +224,7 @@ Pending ───► In Production ───► Ready for Dispatch ───► 
 
 ```
 PollenForYouApi/
-├── Controllers/          # Auth, Users, Catalog, Products, AdminOrders
+├── Controllers/          # Auth, Users, Catalog, Checkout, Products, AdminOrders
 ├── DTOs/                 # Immutable record contracts
 ├── Entities/             # Domain models + status/role/stage constants
 ├── Validators/           # FluentValidation validators
@@ -235,7 +242,5 @@ PollenForYouApi/
 
 ## Roadmap / Not Yet Implemented
 
-- `POST /api/public/checkout/submit` — public customer checkout (lazy-eviction hook, server-side total recalculation, order-number generation). `ExecuteLazyEvictionAsync` is already exposed on the order repository for it.
-- Rate limiting on public checkout endpoints (planned)
 - Frontend client (React 19 / TypeScript, TanStack Query v5)
 - Post-MVP (deferred by SRS): Meta webhook ingestion, Hugging Face demand forecasting

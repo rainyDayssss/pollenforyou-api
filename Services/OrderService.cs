@@ -1,3 +1,4 @@
+using AutoMapper;
 using FluentValidation;
 using FluentValidation.Results;
 using PollenForYouApi.DTOs;
@@ -29,16 +30,97 @@ public class OrderService : IOrderService
 
     private readonly IOrderRepository _orderRepository;
     private readonly IProductRepository _productRepository;
+    private readonly IMapper _mapper;
     private readonly ILogger<OrderService> _logger;
 
     public OrderService(
         IOrderRepository orderRepository,
         IProductRepository productRepository,
+        IMapper mapper,
         ILogger<OrderService> logger)
     {
         _orderRepository = orderRepository;
         _productRepository = productRepository;
+        _mapper = mapper;
         _logger = logger;
+    }
+
+    public async Task<CheckoutResponseDto> SubmitCheckoutAsync(
+        CheckoutRequestDto dto, string? idempotencyKey, CancellationToken ct)
+    {
+        // 0. Idempotent replay: a client resubmitting the same key (double-click,
+        //    retry, TanStack refetch) gets the ORIGINAL confirmation back — never
+        //    a duplicate order. The unique IdempotencyKey index also resolves
+        //    concurrent same-key races at the repository level.
+        var key = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim();
+
+        if (key is { Length: > 100 })
+        {
+            // Column is nvarchar(100) — without this guard an oversized key would
+            // surface as a SQL truncation error (500) instead of a clean 400.
+            throw new ValidationException([
+                new ValidationFailure(nameof(CheckoutRequestDto),
+                    "Idempotency-Key header must be at most 100 characters.")
+            ]);
+        }
+
+        if (key is not null)
+        {
+            var existing = await _orderRepository.GetByIdempotencyKeyAsync(key, ct);
+            if (existing is not null)
+            {
+                _logger.LogInformation(
+                    "Checkout replay for key {IdempotencyKey}: order {OrderNumber}", idempotencyKey, existing.OrderNumber);
+
+                return new CheckoutResponseDto
+                {
+                    OrderNumber = existing.OrderNumber,
+                    TotalPrice = existing.TotalPrice,
+                    ExpiresAt = existing.ExpiresAt
+                };
+            }
+        }
+
+        // 1. Server-side ground truth: load the active products being ordered.
+        //    Client-submitted pricing is discarded (AGENT.md §5).
+        var productIds = dto.Items.Select(i => i.ProductId).Distinct().ToArray();
+        var products = await _productRepository.GetByIdsAsync(productIds, ct);
+
+        var missing = productIds.Except(products.Select(p => p.Id)).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new ValidationException([
+                new ValidationFailure(nameof(CheckoutRequestDto.Items),
+                    $"The following products are not available: {string.Join(", ", missing)}.")
+            ]);
+        }
+
+        var priceByProduct = products.ToDictionary(p => p.Id);
+
+        // 2. Recompute the total from DB base prices.
+        var totalPrice = dto.Items.Sum(i => priceByProduct[i.ProductId].BasePrice * i.Quantity);
+
+        // 3. Build the transient Pending order (2-hour TTL, SRS §3.1.1). Line
+        //    items are NOT persisted here — they're frozen at settlement.
+        var order = _mapper.Map<Order>(dto);
+        order.Status = OrderStatuses.Pending;
+        order.TotalPrice = totalPrice;
+        order.ExpiresAt = DateTime.UtcNow.AddHours(2);
+        order.IdempotencyKey = key;
+
+        // 4. Lazy eviction hook, then create the order (SRS §3.1.5).
+        await _orderRepository.ExecuteLazyEvictionAsync(ct);
+        var created = await _orderRepository.CreateCheckoutAsync(order, ct);
+
+        _logger.LogInformation(
+            "Checkout submitted: order {OrderNumber}, total {TotalPrice}", created.OrderNumber, created.TotalPrice);
+
+        return new CheckoutResponseDto
+        {
+            OrderNumber = created.OrderNumber,
+            TotalPrice = created.TotalPrice,
+            ExpiresAt = created.ExpiresAt
+        };
     }
 
     public async Task<PagedResult<OrderQueueDto>> GetQueueAsync(int page, int pageSize, CancellationToken ct)

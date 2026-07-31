@@ -50,7 +50,7 @@ Follow these patterns exactly. They are not suggestions.
 3. **AutoMapper Profiles for all projection:** Register dedicated profiles. Use `.ProjectTo<T>()` on IQueryables for SQL-efficient projection.
 4. **EF Core Fluent API only:** No Data Annotations. Use `IEntityTypeConfiguration<T>` classes wired in `DbContext.OnModelCreating()`. Configurations must explicitly set: table names, primary keys, required string lengths, FK constraints, `RowVersion` concurrency tokens (`builder.Property(o => o.RowVersion).IsRowVersion()`), and global soft-delete query filters (`HasQueryFilter(e => e.IsActive)`).
 5. **Reads are `AsNoTracking()`:** All queue and catalog queries use `AsNoTracking()`, combine logical-expiry/soft-delete filters, and paginate at the database level (`.Skip((page-1)*pageSize).Take(pageSize)` → SQL `OFFSET...FETCH NEXT`).
-6. **Deterministic Order Numbers:** `PFY-YYYYMMDD-XXXX` (e.g., `PFY-20260731-0001`) via a **daily database sequence**. Never random reference codes.
+6. **Deterministic Order Numbers:** `PFY-YYYYMMDD-XXXX` (e.g., `PFY-20260731-0001`) via a **daily counter** (`COUNT` of today's orders + 1) guarded by the unique `OrderNumber` index with a retry loop on 2601/2627 — workerless, no background reset job. Never random reference codes.
 7. **Immutable record DTOs:** Every DTO is a `record` with `{ get; init; }` properties only — never `{ get; set; }`. DTOs are data contracts, not mutable holders. When a service/repository must enrich a DTO after mapping (e.g., populating `Roles` — Identity exposes no `Roles` navigation on the user, so it's filled post-`ProjectTo`/`Map`), rebuild it with a `with`-expression: `dto with { Roles = roles }`, or return a fresh list of rebuilt items (`UserRepository.PopulateRolesAsync`). System.Text.Json binds init-only request DTOs fine.
 
 ## 5. Core Domain — Order State Machine
@@ -120,7 +120,7 @@ All collection endpoints support `page` (default `1`, 1-indexed) and `pageSize` 
 | Method | Route | Auth | Notes |
 | :--- | :--- | :--- | :--- |
 | GET | `/api/public/products` | Anonymous | On-load cached; `category`, `page`, `pageSize` |
-| POST | `/api/public/checkout/submit` | Anonymous (**rate-limited**) | Lazy eviction hook → recalc total → create `Pending` → return Order Number |
+| POST | `/api/public/checkout/submit` | Anonymous (**rate-limited**: fixed-window per-IP, `checkout` policy) | Lazy eviction hook → recalc total → create `Pending` → return Order Number. Optional `Idempotency-Key` header: replays resolve to the original order (unique filtered index on `Orders.IdempotencyKey`, no duplicates). |
 | POST | `/api/auth/login` | Anonymous | Issue JWT access + refresh pair |
 | POST | `/api/auth/refresh` | Anonymous | Rotate refresh token, issue new access token |
 | GET | `/api/orders/queue` | Admin / Superadmin | FIFO active `Pending`; `ProjectTo<OrderQueueDto>()`; paginated |
@@ -145,7 +145,7 @@ All collection endpoints support `page` (default `1`, 1-indexed) and `pageSize` 
 - **Email uniqueness is enforced at the DB level:** `AspNetUsers.NormalizedEmail` carries a **filtered unique index** (`EmailIndex`, `WHERE [NormalizedEmail] IS NOT NULL`, configured in `ApplicationUserConfiguration` by merging into Identity's default index). Uniqueness applies to non-null emails only — users without an email don't collide. This is belt-and-suspenders on top of `User.RequireUniqueEmail = true` (app-layer validator). **Consequence: a concurrent duplicate-email create now surfaces as `DbUpdateException` (SQL unique violation) — the future `UsersController` must catch it and map to 409/400, not rely solely on the validator.**
 - **Query filter on `ApplicationUser` affects Identity & audit joins:** `UserManager.FindByEmailAsync/FindByIdAsync` inherit the `IsActive` filter, so soft-deleted admins can't authenticate (desired) — but the `UsersController` listing/reactivation endpoints MUST use `IgnoreQueryFilters()`, or reactivation can't locate the account. Also, `Payment.VerifiedBy` is a required FK whose principal can be filtered out → project audit DTOs from the raw `VerifiedByAdminId` int, not the navigation.
 - **Verified order rows are immutable.**
-- **Rate limiting:** Public checkout endpoints protected by ASP.NET Core Rate Limiting middleware.
+- **Rate limiting:** Public checkout endpoints protected by ASP.NET Core **built-in** Rate Limiting middleware (`AddRateLimiter` + `UseRateLimiter`, no packages). Policy `checkout` = fixed-window per IP (`RateLimitingOptions` in `appsettings.json`); rejection → `429` with uniform `ProblemDetails` + `Retry-After` header via `OnRejected`.
 
 ## 13. Client Polling Contract (context for API design)
 
@@ -157,7 +157,7 @@ All collection endpoints support `page` (default `1`, 1-indexed) and `pageSize` 
 - ❌ No background workers for eviction or any other timer-based sweeps.
 - ❌ No hard deletes of order rows (including expired ones).
 - ❌ No Data Annotations for EF mapping.
-- ❌ No random reference codes; Order Numbers are `PFY-YYYYMMDD-XXXX` from a daily DB sequence.
+- ❌ No random reference codes; Order Numbers are `PFY-YYYYMMDD-XXXX` from the daily counter in `OrderRepository.CreateCheckoutAsync` (unique `OrderNumber` index = race backstop).
 - ❌ Never trust client-submitted totals; always recompute from DB prices.
 - ❌ No auto-links to Messenger/Meta; plaintext handles only.
 - ❌ No un-paginated collection endpoints (respect the `pageSize` max of 50).
