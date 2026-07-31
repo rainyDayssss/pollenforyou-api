@@ -22,6 +22,12 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
             .HasMaxLength(150)
             .IsRequired();
 
+        builder.Property(p => p.Description)
+            .HasMaxLength(1000);
+
+        builder.Property(p => p.ImageUrl)
+            .HasMaxLength(2048);
+
         builder.Property(p => p.BasePrice)
             .HasPrecision(18, 2);
 

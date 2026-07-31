@@ -112,6 +112,8 @@ public class ProductRepository : IProductRepository
             .Where(p => p.Id == id)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(p => p.Name, p => dto.Name ?? p.Name)
+                .SetProperty(p => p.Description, p => dto.Description ?? p.Description)
+                .SetProperty(p => p.ImageUrl, p => dto.ImageUrl ?? p.ImageUrl)
                 .SetProperty(p => p.ProductCode, p => dto.ProductCode ?? p.ProductCode)
                 .SetProperty(p => p.CategoryId, p => dto.CategoryId ?? p.CategoryId)
                 .SetProperty(p => p.BasePrice, p => dto.BasePrice ?? p.BasePrice)

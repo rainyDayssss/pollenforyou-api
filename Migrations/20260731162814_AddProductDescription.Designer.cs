@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PollenForYouApi.Data;
 
@@ -11,9 +12,11 @@ using PollenForYouApi.Data;
 namespace PollenForYouApi.Migrations
 {
     [DbContext(typeof(PfyDbContext))]
-    partial class PfyDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260731162814_AddProductDescription")]
+    partial class AddProductDescription
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -470,10 +473,6 @@ namespace PollenForYouApi.Migrations
                     b.Property<string>("Description")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
-
-                    b.Property<string>("ImageUrl")
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
