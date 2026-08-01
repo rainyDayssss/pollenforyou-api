@@ -17,5 +17,9 @@ public class ProductMappingProfile : Profile
             .ForMember(d => d.CategoryName, opt => opt.MapFrom(s => s.Category.Name));
 
         CreateMap<CreateProductRequestDto, Product>();
+
+        CreateMap<Category, CategoryDto>();
+
+        CreateMap<CreateCategoryRequestDto, Category>();
     }
 }

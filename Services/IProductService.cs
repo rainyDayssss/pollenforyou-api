@@ -15,4 +15,8 @@ public interface IProductService
     Task<ProductResponseDto> CreateProductAsync(CreateProductRequestDto dto, CancellationToken ct);
 
     Task<ProductResponseDto> UpdateProductAsync(int id, UpdateProductRequestDto dto, CancellationToken ct);
+
+    Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync(CancellationToken ct);
+
+    Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequestDto dto, CancellationToken ct);
 }

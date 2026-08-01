@@ -69,6 +69,38 @@ public class ProductRepository : IProductRepository
             .AnyAsync(c => c.Id == categoryId, ct);
     }
 
+    public async Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync(CancellationToken ct)
+    {
+        return await _db.Categories
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .OrderBy(c => c.Name)
+            .ProjectTo<CategoryDto>(_mapper.ConfigurationProvider)
+            .ToListAsync(ct);
+    }
+
+    public async Task<bool> CategoryExistsByNameAsync(string name, CancellationToken ct)
+    {
+        var normalized = name.Trim().ToLower();
+        return await _db.Categories
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(c => c.Name.ToLower() == normalized, ct);
+    }
+
+    public async Task<CategoryDto> CreateAsync(Category category, CancellationToken ct)
+    {
+        _db.Categories.Add(category);
+        await _db.SaveChangesAsync(ct);
+
+        return await _db.Categories
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(c => c.Id == category.Id)
+            .ProjectTo<CategoryDto>(_mapper.ConfigurationProvider)
+            .FirstAsync(ct);
+    }
+
     public async Task<IReadOnlyList<Product>> GetByIdsAsync(IReadOnlyCollection<int> ids, CancellationToken ct)
     {
         if (ids.Count == 0)

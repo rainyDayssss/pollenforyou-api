@@ -96,6 +96,24 @@ public class ProductService : IProductService
         }
     }
 
+    public Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync(CancellationToken ct)
+    {
+        return _productRepository.GetCategoriesAsync(ct);
+    }
+
+    public async Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequestDto dto, CancellationToken ct)
+    {
+        if (await _productRepository.CategoryExistsByNameAsync(dto.Name, ct))
+        {
+            throw new DuplicateCategoryNameException();
+        }
+
+        var category = _mapper.Map<Category>(dto);
+        category.IsActive = true;
+
+        return await _productRepository.CreateAsync(category, ct);
+    }
+
     private async Task<PagedResult<ProductResponseDto>> GetProductsPageAsync(
         string? category, int page, int pageSize, bool includeDeleted, CancellationToken ct)
     {

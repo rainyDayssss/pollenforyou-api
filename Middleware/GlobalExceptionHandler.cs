@@ -33,6 +33,8 @@ public class GlobalExceptionHandler : IExceptionHandler
                 StatusCodes.Status409Conflict, "Conflict", ex.Message, null),
             DuplicateProductCodeException ex => (
                 StatusCodes.Status409Conflict, "Conflict", ex.Message, null),
+            DuplicateCategoryNameException ex => (
+                StatusCodes.Status409Conflict, "Conflict", ex.Message, null),
             ConflictException ex => (
                 StatusCodes.Status409Conflict, "Conflict", ex.Message, null),
             ValidationException ex => (

@@ -19,6 +19,14 @@ public interface IProductRepository
 
     Task<bool> CategoryExistsAsync(int categoryId, CancellationToken ct);
 
+    /// <summary>Lists all categories (including soft-deactivated ones) ordered by name.</summary>
+    Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync(CancellationToken ct);
+
+    /// <summary>True if any category (including soft-deactivated) already uses the name, case-insensitive.</summary>
+    Task<bool> CategoryExistsByNameAsync(string name, CancellationToken ct);
+
+    Task<CategoryDto> CreateAsync(Category category, CancellationToken ct);
+
     /// <summary>Loads the given active products (query filter applies) — used as server-side ground truth for settlement.</summary>
     Task<IReadOnlyList<Product>> GetByIdsAsync(IReadOnlyCollection<int> ids, CancellationToken ct);
 
