@@ -65,6 +65,7 @@ public class OrderRepository : IOrderRepository
     {
         return await _db.Orders
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(o => o.OrderNumber == orderNumber)
             .ProjectTo<OrderDetailDto>(_mapper.ConfigurationProvider)
             .FirstOrDefaultAsync(ct);
@@ -74,6 +75,7 @@ public class OrderRepository : IOrderRepository
     {
         return await _db.Orders
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .Where(o => o.Id == id)
             .ProjectTo<OrderDetailDto>(_mapper.ConfigurationProvider)
             .FirstOrDefaultAsync(ct);
