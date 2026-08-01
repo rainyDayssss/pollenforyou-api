@@ -43,6 +43,9 @@ public interface IOrderRepository
     /// <summary>Active <c>Pending</c> orders in FIFO order (SRS §2.3), paginated.</summary>
     Task<PagedResult<OrderQueueDto>> GetQueuePageAsync(int page, int pageSize, CancellationToken ct);
 
+    /// <summary>Every ledger order (any status), newest first, optionally filtered by status (SRS ops view).</summary>
+    Task<PagedResult<OrderHistoryDto>> GetHistoryPageAsync(int page, int pageSize, string? status, CancellationToken ct);
+
     Task<OrderDetailDto?> GetDetailByOrderNumberAsync(string orderNumber, CancellationToken ct);
 
     Task<OrderDetailDto?> GetDetailByIdAsync(int id, CancellationToken ct);

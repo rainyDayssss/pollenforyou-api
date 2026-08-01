@@ -16,6 +16,12 @@ public interface IOrderService
 
     Task<PagedResult<OrderQueueDto>> GetQueueAsync(int page, int pageSize, CancellationToken ct);
 
+    /// <summary>Paged, status-filterable history of every ledger order (SRS ops view).</summary>
+    Task<PagedResult<OrderHistoryDto>> GetOrderHistoryAsync(int page, int pageSize, string? status, CancellationToken ct);
+
+    /// <summary>Full order detail by id (frozen items + payment ledger), no claim required.</summary>
+    Task<OrderDetailDto> GetOrderDetailAsync(int id, CancellationToken ct);
+
     Task<OrderDetailDto> ClaimOrderAsync(string orderNumber, int adminUserId, CancellationToken ct);
 
     Task ReleaseClaimAsync(string orderNumber, int adminUserId, CancellationToken ct);

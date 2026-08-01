@@ -62,6 +62,24 @@ public class AdminOrdersController : ControllerBase
         return Ok(queue);
     }
 
+    /// <summary>Paged, status-filterable history of every ledger order (SRS ops view).</summary>
+    [HttpGet("admin/orders")]
+    public async Task<ActionResult<PagedResult<OrderHistoryDto>>> GetOrderHistory(
+        CancellationToken ct,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 12,
+        [FromQuery] string? status = null)
+    {
+        return Ok(await _orderService.GetOrderHistoryAsync(page, pageSize, status, ct));
+    }
+
+    /// <summary>Full order detail by id (frozen items + payment ledger), no claim required — used by the history view.</summary>
+    [HttpGet("admin/orders/{id:int}")]
+    public async Task<ActionResult<OrderDetailDto>> GetOrderDetail(int id, CancellationToken ct)
+    {
+        return Ok(await _orderService.GetOrderDetailAsync(id, ct));
+    }
+
     /// <summary>Acquires the 15-minute workspace claim for an order; 409 on collision.</summary>
     [HttpPost("orders/claim/{orderNumber}")]
     public async Task<ActionResult<OrderDetailDto>> ClaimOrder(string orderNumber, CancellationToken ct)

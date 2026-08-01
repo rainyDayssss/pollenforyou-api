@@ -131,6 +131,32 @@ public class OrderService : IOrderService
         return await _orderRepository.GetQueuePageAsync(page, pageSize, ct);
     }
 
+    public async Task<PagedResult<OrderHistoryDto>> GetOrderHistoryAsync(
+        int page, int pageSize, string? status, CancellationToken ct)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+
+        // Reject unknown status filters at the boundary so bad input returns 400
+        // instead of silently matching zero rows.
+        var normalizedStatus = string.IsNullOrWhiteSpace(status) ? null : status!.Trim();
+        if (normalizedStatus is not null && !IsKnownStatus(normalizedStatus))
+        {
+            throw new ValidationException([
+                new ValidationFailure(nameof(OrderStatusUpdateRequestDto.Status),
+                    $"Status must be one of: {string.Join(", ", AllKnownStatuses)}.")
+            ]);
+        }
+
+        return await _orderRepository.GetHistoryPageAsync(page, pageSize, normalizedStatus, ct);
+    }
+
+    public async Task<OrderDetailDto> GetOrderDetailAsync(int id, CancellationToken ct)
+    {
+        return await _orderRepository.GetDetailByIdAsync(id, ct)
+            ?? throw new NotFoundException($"Order with id {id} was not found.");
+    }
+
     public async Task<OrderDetailDto> ClaimOrderAsync(string orderNumber, int adminUserId, CancellationToken ct)
     {
         var result = await _orderRepository.ClaimAsync(orderNumber, adminUserId, ct);
@@ -254,5 +280,21 @@ public class OrderService : IOrderService
     private static bool IsTransitionAllowed(string currentStatus, string targetStatus)
     {
         return AllowedTransitions.TryGetValue(currentStatus, out var targets) && targets.Contains(targetStatus);
+    }
+
+    private static readonly string[] AllKnownStatuses =
+    [
+        OrderStatuses.Pending,
+        OrderStatuses.InProduction,
+        OrderStatuses.ReadyForDispatch,
+        OrderStatuses.Dispatched,
+        OrderStatuses.Completed,
+        OrderStatuses.Cancelled,
+        OrderStatuses.Expired
+    ];
+
+    private static bool IsKnownStatus(string status)
+    {
+        return AllKnownStatuses.Contains(status);
     }
 }

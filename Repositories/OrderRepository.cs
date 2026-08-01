@@ -61,6 +61,42 @@ public class OrderRepository : IOrderRepository
         };
     }
 
+    public async Task<PagedResult<OrderHistoryDto>> GetHistoryPageAsync(
+        int page, int pageSize, string? status, CancellationToken ct)
+    {
+        // Every ledger order (any status), newest first; optionally filtered by
+        // status so admins can browse settled/fulfilled/expired/cancelled records.
+        var query = _db.Orders.AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(o => o.Status == status);
+        }
+
+        var totalItems = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .ThenByDescending(o => o.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ProjectTo<OrderHistoryDto>(_mapper.ConfigurationProvider)
+            .ToListAsync(ct);
+
+        var totalPages = (int)Math.Ceiling(totalItems / (double)pageSize);
+
+        return new PagedResult<OrderHistoryDto>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            TotalItems = totalItems,
+            TotalPages = totalPages,
+            HasNextPage = page < totalPages,
+            HasPreviousPage = page > 1
+        };
+    }
+
     public async Task<OrderDetailDto?> GetDetailByOrderNumberAsync(string orderNumber, CancellationToken ct)
     {
         return await _db.Orders

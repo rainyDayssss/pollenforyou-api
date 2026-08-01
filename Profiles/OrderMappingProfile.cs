@@ -22,6 +22,10 @@ public class OrderMappingProfile : Profile
             .ForMember(d => d.ClaimedByEmail, opt => opt.MapFrom(s =>
                 s.ClaimedBy != null ? s.ClaimedBy.Email : null));
 
+        CreateMap<Order, OrderHistoryDto>()
+            .ForMember(d => d.ClaimedByEmail, opt => opt.MapFrom(s =>
+                s.ClaimedBy != null ? s.ClaimedBy.Email : null));
+
         CreateMap<OrderItem, OrderItemDto>();
         CreateMap<Payment, PaymentDto>();
 
