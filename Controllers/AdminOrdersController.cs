@@ -111,7 +111,7 @@ public class AdminOrdersController : ControllerBase
         }
 
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint.ToString()));
-        return Convert.ToHexString(hash)[..32];
+        return $"\"{Convert.ToHexString(hash)[..32]}\"";
     }
 
     private int GetAdminUserId()
